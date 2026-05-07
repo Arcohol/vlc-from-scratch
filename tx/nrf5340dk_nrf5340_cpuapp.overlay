@@ -1,0 +1,63 @@
+&pinctrl {
+    dmd_spis1_default: dmd_spis1_default {
+        group1 {
+            psels = <NRF_PSEL(SPIS_SCK, 0, 25)>,
+                    <NRF_PSEL(SPIS_MISO, 0, 9)>;
+        };
+    };
+
+    dmd_spim4_default: dmd_spim4_default {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 8)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 12)>;
+        };
+    };
+
+    dmd_spim4_sleep: dmd_spim4_sleep {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 8)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 12)>;
+            low-power-enable;
+        };
+    };
+};
+
+&spi1 {
+    status = "okay";
+    compatible = "nordic,nrf-spis";
+    pinctrl-0 = <&dmd_spis1_default>;
+    pinctrl-names = "default";
+    def-char = <0x00>;
+};
+
+&spi4 {
+    status = "okay";
+    compatible = "nordic,nrf-spim";
+    pinctrl-0 = <&dmd_spim4_default>;
+    pinctrl-1 = <&dmd_spim4_sleep>;
+    pinctrl-names = "default", "sleep";
+};
+
+/ {
+    aliases {
+        shut1 = &dmd_shutdown_1;
+        shut2 = &dmd_shutdown_2;
+        shut3 = &dmd_shutdown_3;
+    };
+
+    dmd_shutdowns {
+        compatible = "gpio-leds";
+
+        dmd_shutdown_1: dmd_shutdown_1 {
+            gpios = <&gpio0 31 GPIO_ACTIVE_LOW>;
+        };
+
+        dmd_shutdown_2: dmd_shutdown_2 {
+            gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+        };
+
+        dmd_shutdown_3: dmd_shutdown_3 {
+            gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;
+        };
+    };
+};
