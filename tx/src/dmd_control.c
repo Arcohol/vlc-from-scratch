@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <string.h>
 
-#include <hal/nrf_gpio.h>
 #include <nrfx_clock.h>
 #include <nrfx_spim.h>
 #include <nrfx_spis.h>
@@ -77,12 +76,16 @@ static const struct gpio_dt_spec dmd_shutdowns[] = {
 };
 
 static nrfx_spim_config_t dmd_make_spim_config(void) {
-  nrfx_spim_config_t spim_config = NRFX_SPIM_DEFAULT_CONFIG(
-      DMD_DRC_B_CLK_PIN, DMD_DRC_B_DATA_PIN, NRF_SPIM_PIN_NOT_CONNECTED,
-      NRF_SPIM_PIN_NOT_CONNECTED);
+  nrfx_spim_config_t spim_config =
+      NRFX_SPIM_DEFAULT_CONFIG(DMD_DRC_B_CLK_PIN, DMD_DRC_B_DATA_PIN,
+                               NRF_SPIM_PIN_NOT_CONNECTED, DMD_DRC_B_LOADB_PIN);
 
   spim_config.frequency = NRFX_MHZ_TO_HZ(DMD_SPIM_FREQUENCY_MHZ);
   spim_config.mode = NRF_SPIM_MODE_2;
+#if NRF_SPIM_HAS_HW_CSN
+  spim_config.use_hw_ss = true;
+  spim_config.ss_duration = 8;
+#endif
 
   return spim_config;
 }
@@ -158,9 +161,6 @@ int dmd_control_init(void) {
   IRQ_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_SPIS_INST_GET(1)), IRQ_PRIO_LOWEST,
               nrfx_spis_irq_handler, &dmd_spis, 0);
 
-  nrf_gpio_cfg_output(DMD_DRC_B_LOADB_PIN);
-  nrf_gpio_pin_set(DMD_DRC_B_LOADB_PIN);
-
   shift_right(dmd_sac_b_buffer, sizeof(dmd_sac_b_buffer), 2);
 
   nrfx_spis_config_t spis_config =
@@ -212,9 +212,7 @@ int dmd_send_bit(bool bit) {
   nrfx_spim_xfer_desc_t xfer =
       NRFX_SPIM_XFER_TRX(dmd_drc_b_buffer, sizeof(dmd_drc_b_buffer), NULL, 0);
 
-  nrf_gpio_pin_clear(DMD_DRC_B_LOADB_PIN);
   int err = nrfx_spim_xfer(&dmd_spim, &xfer, 0);
-  nrf_gpio_pin_set(DMD_DRC_B_LOADB_PIN);
 
   return err;
 }
