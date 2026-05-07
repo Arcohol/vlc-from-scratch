@@ -2,6 +2,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
 
     # Used by zephyr-nix to make a specific python environment for zephyr.
     zephyr.url = "github:zephyrproject-rtos/zephyr/v4.4.0";
@@ -16,6 +18,7 @@
     {
       nixpkgs,
       flake-utils,
+      treefmt-nix,
       zephyr-nix,
       ...
     }:
@@ -35,8 +38,20 @@
         zephyr = zephyr-nix.packages.${system};
         zephyr-sdk = zephyr.sdk-1_0.override { targets = [ "arm-zephyr-eabi" ]; };
         zephyr-pythonEnv = zephyr.pythonEnv;
+        treefmtEval = treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+
+          programs = {
+            clang-format.enable = true;
+            nixfmt.enable = true;
+          };
+        };
       in
       {
+        formatter = treefmtEval.config.build.wrapper;
+
+        checks.formatting = treefmtEval.config.build.check ./.;
+
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
             dtc
