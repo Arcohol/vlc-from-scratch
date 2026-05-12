@@ -45,6 +45,10 @@
 #define VLC_TX_WAIT_POLL_MS 10
 #endif
 
+#ifndef VLC_TX_REMEMBER_LAST_BIT
+#define VLC_TX_REMEMBER_LAST_BIT 1
+#endif
+
 #define VLC_TX_PREAMBLE_BYTE 0xAA
 #define VLC_TX_PREAMBLE_LEN 4
 #define VLC_TX_SFD 0xD5
@@ -82,6 +86,8 @@ static bool vlc_tx_initialized;
 static volatile int vlc_tx_active_frame = -1;
 static volatile int vlc_tx_pending_frame = -1;
 static volatile uint32_t vlc_tx_active_chip_index;
+static bool vlc_tx_last_bit;
+static bool vlc_tx_last_bit_valid;
 
 static uint32_t vlc_tx_half_bit_ticks;
 static uint32_t vlc_tx_next_compare_ticks;
@@ -189,6 +195,23 @@ static void vlc_tx_fail(int error) {
   nrfx_timer_disable(&vlc_tx_timer);
 }
 
+static int vlc_tx_send_chip(bool chip) {
+#if VLC_TX_REMEMBER_LAST_BIT
+  if (vlc_tx_last_bit_valid && vlc_tx_last_bit == chip) {
+    return dmd_control_ready() ? 0 : -EBUSY;
+  }
+#endif
+
+  int ret = dmd_send_bit_async(chip);
+
+  if (ret == 0) {
+    vlc_tx_last_bit = chip;
+    vlc_tx_last_bit_valid = true;
+  }
+
+  return ret;
+}
+
 static void vlc_tx_timer_handler(nrf_timer_event_t event_type, void *context) {
   ARG_UNUSED(context);
 
@@ -208,7 +231,7 @@ static void vlc_tx_timer_handler(nrf_timer_event_t event_type, void *context) {
   nrfx_timer_compare(&vlc_tx_timer, NRF_TIMER_CC_CHANNEL0,
                      vlc_tx_next_compare_ticks, true);
 
-  int ret = dmd_send_bit_async(vlc_tx_next_chip());
+  int ret = vlc_tx_send_chip(vlc_tx_next_chip());
 
   if (ret != 0) {
     vlc_tx_fail(ret);
@@ -360,8 +383,10 @@ int vlc_tx_init(void) {
   vlc_tx_active_frame = -1;
   vlc_tx_pending_frame = -1;
   vlc_tx_active_chip_index = 0;
+  vlc_tx_last_bit = false;
+  vlc_tx_last_bit_valid = false;
 
-  ret = dmd_send_bit_async(true);
+  ret = vlc_tx_send_chip(true);
 
   if (ret != 0) {
     return ret;

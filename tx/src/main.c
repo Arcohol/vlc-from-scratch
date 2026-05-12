@@ -42,6 +42,8 @@ int main(void) {
         printk("VLC TX failed: %d\n", ret);
         return ret;
       }
+
+      k_msleep(200);
     }
   }
 }
