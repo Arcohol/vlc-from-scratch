@@ -1,9 +1,8 @@
+#include <errno.h>
 #include <stdint.h>
-#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-#include <zephyr/sys/util.h>
 
 #include "vlc_tx.h"
 
@@ -19,31 +18,35 @@ int main(void) {
 
   printk("VLC TX ready\n");
 
-  static const char *const messages[] = {
-      "hello",
-      "dmd",
-      "vlc",
-  };
+  uint32_t sequence = 0;
+  char message[64];
 
   while (true) {
-    for (size_t i = 0; i < ARRAY_SIZE(messages); ++i) {
-      const char *message = messages[i];
+    int len = snprintk(message, sizeof(message), "Hello, world! seq=%lu",
+                       (unsigned long)sequence);
 
-      ret = vlc_tx_send((const uint8_t *)message, strlen(message), K_FOREVER);
-
-      if (ret != 0) {
-        printk("VLC TX send failed: %d\n", ret);
-        return ret;
-      }
-
-      ret = vlc_tx_get_error();
-
-      if (ret != 0) {
-        printk("VLC TX failed: %d\n", ret);
-        return ret;
-      }
-
-      k_msleep(200);
+    if (len < 0 || (size_t)len >= sizeof(message)) {
+      printk("Message formatting failed: %d\n", len);
+      return -EINVAL;
     }
+
+    ret = vlc_tx_send((const uint8_t *)message, (uint32_t)len, K_FOREVER);
+
+    if (ret != 0) {
+      printk("VLC TX send failed: %d\n", ret);
+      return ret;
+    }
+
+    ret = vlc_tx_get_error();
+
+    if (ret != 0) {
+      printk("VLC TX failed: %d\n", ret);
+      return ret;
+    }
+
+    printk("Sent: %s\n", message);
+
+    ++sequence;
+    k_msleep(50);
   }
 }
