@@ -1,7 +1,6 @@
 #include "dmd_control.h"
 
 #include <errno.h>
-#include <string.h>
 
 #include <nrfx_clock.h>
 #include <nrfx_spim.h>
@@ -14,6 +13,10 @@
 
 #define DMD_WAVEFORM_BYTES 14
 #define DMD_SPIM_FREQUENCY_MHZ 16
+
+#ifndef DMD_SPIM_IRQ_PRIORITY
+#define DMD_SPIM_IRQ_PRIORITY 1
+#endif
 
 #ifndef DMD_DRC_B_CLK_PIN
 #define DMD_DRC_B_CLK_PIN 8
@@ -51,18 +54,17 @@ static nrfx_spim_t dmd_spim = NRFX_SPIM_INSTANCE(NRF_SPIM_INST_GET(4));
 static nrfx_spis_t dmd_spis = NRFX_SPIS_INSTANCE(NRF_SPIS_INST_GET(1));
 
 static bool dmd_initialized;
+static volatile bool dmd_spim_busy;
 
-static const uint8_t dmd_drc_b_0[DMD_WAVEFORM_BYTES] = {
+static uint8_t dmd_drc_b_0[DMD_WAVEFORM_BYTES] = {
     0xFF, 0xFF, 0xFF, 0xC6, 0x7F, 0xFF, 0xC0,
     0x7F, 0xFF, 0x05, 0xFF, 0xFF, 0xFF, 0xFF,
 };
 
-static const uint8_t dmd_drc_b_1[DMD_WAVEFORM_BYTES] = {
+static uint8_t dmd_drc_b_1[DMD_WAVEFORM_BYTES] = {
     0xFF, 0xFF, 0xFF, 0x86, 0x7F, 0xFF, 0x80,
     0x7F, 0xFE, 0x05, 0xFF, 0xFF, 0xFF, 0xFF,
 };
-
-static uint8_t dmd_drc_b_buffer[DMD_WAVEFORM_BYTES];
 
 static uint8_t dmd_sac_b_buffer[DMD_WAVEFORM_BYTES] = {
     0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x80,
@@ -82,6 +84,7 @@ static nrfx_spim_config_t dmd_make_spim_config(void) {
 
   spim_config.frequency = NRFX_MHZ_TO_HZ(DMD_SPIM_FREQUENCY_MHZ);
   spim_config.mode = NRF_SPIM_MODE_2;
+  spim_config.irq_priority = DMD_SPIM_IRQ_PRIORITY;
 #if NRF_SPIM_HAS_HW_CSN
   spim_config.use_hw_ss = true;
   spim_config.ss_duration = 8;
@@ -102,11 +105,6 @@ static void shift_right(uint8_t *data, size_t len, uint8_t shift) {
   }
 }
 
-static void dmd_stage_bit(bool bit) {
-  memcpy(dmd_drc_b_buffer, bit ? dmd_drc_b_1 : dmd_drc_b_0,
-         sizeof(dmd_drc_b_buffer));
-}
-
 static void dmd_spis_handler(nrfx_spis_event_t const *event, void *context) {
   ARG_UNUSED(context);
 
@@ -116,6 +114,14 @@ static void dmd_spis_handler(nrfx_spis_event_t const *event, void *context) {
 
   (void)nrfx_spis_buffers_set(&dmd_spis, dmd_sac_b_buffer,
                               sizeof(dmd_sac_b_buffer), NULL, 0);
+}
+
+static void dmd_spim_handler(nrfx_spim_event_t const *event, void *context) {
+  ARG_UNUSED(context);
+
+  if (event->type == NRFX_SPIM_EVENT_DONE) {
+    dmd_spim_busy = false;
+  }
 }
 
 static int dmd_control_power_up(void) {
@@ -160,6 +166,8 @@ int dmd_control_init(void) {
 
   IRQ_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_SPIS_INST_GET(1)), IRQ_PRIO_LOWEST,
               nrfx_spis_irq_handler, &dmd_spis, 0);
+  IRQ_CONNECT(NRFX_IRQ_NUMBER_GET(NRF_SPIM_INST_GET(4)), DMD_SPIM_IRQ_PRIORITY,
+              nrfx_spim_irq_handler, &dmd_spim, 0);
 
   shift_right(dmd_sac_b_buffer, sizeof(dmd_sac_b_buffer), 2);
 
@@ -186,19 +194,21 @@ int dmd_control_init(void) {
 
   nrfx_spim_config_t spim_config = dmd_make_spim_config();
 
-  err = nrfx_spim_init(&dmd_spim, &spim_config, NULL, NULL);
+  err = nrfx_spim_init(&dmd_spim, &spim_config, dmd_spim_handler, NULL);
 
   if (err != 0 && err != -EALREADY) {
     return err;
   }
 
-  dmd_stage_bit(false);
+  dmd_spim_busy = false;
   dmd_initialized = true;
 
   return 0;
 }
 
-int dmd_send_bit(bool bit) {
+bool dmd_control_ready(void) { return dmd_initialized && !dmd_spim_busy; }
+
+int dmd_send_bit_async(bool bit) {
   if (!dmd_initialized) {
     int ret = dmd_control_init();
 
@@ -207,12 +217,36 @@ int dmd_send_bit(bool bit) {
     }
   }
 
-  dmd_stage_bit(bit);
+  if (dmd_spim_busy) {
+    return -EBUSY;
+  }
+
+  uint8_t *tx_buffer = bit ? dmd_drc_b_1 : dmd_drc_b_0;
 
   nrfx_spim_xfer_desc_t xfer =
-      NRFX_SPIM_XFER_TRX(dmd_drc_b_buffer, sizeof(dmd_drc_b_buffer), NULL, 0);
+      NRFX_SPIM_XFER_TRX(tx_buffer, DMD_WAVEFORM_BYTES, NULL, 0);
+
+  dmd_spim_busy = true;
 
   int err = nrfx_spim_xfer(&dmd_spim, &xfer, 0);
 
+  if (err != 0) {
+    dmd_spim_busy = false;
+  }
+
   return err;
+}
+
+int dmd_send_bit(bool bit) {
+  int ret = dmd_send_bit_async(bit);
+
+  if (ret != 0) {
+    return ret;
+  }
+
+  while (!dmd_control_ready()) {
+    k_busy_wait(1);
+  }
+
+  return 0;
 }

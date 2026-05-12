@@ -8,6 +8,7 @@ project(oh_my_dmd)
 target_sources(app PRIVATE
     src/main.c
     src/dmd_control.c
+    src/vlc_tx.c
 )
 
 target_include_directories(app PRIVATE src)
