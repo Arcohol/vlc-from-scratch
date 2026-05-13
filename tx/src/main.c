@@ -47,6 +47,6 @@ int main(void) {
     printk("Sent: %s\n", message);
 
     ++sequence;
-    k_msleep(50);
+    k_msleep(5);
   }
 }
