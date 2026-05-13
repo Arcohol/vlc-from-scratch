@@ -22,7 +22,7 @@
 #endif
 
 #ifndef VLC_TX_HALF_BIT_US
-#define VLC_TX_HALF_BIT_US 100
+#define VLC_TX_HALF_BIT_US 40
 #endif
 
 #ifndef VLC_TX_TIMER_INSTANCE

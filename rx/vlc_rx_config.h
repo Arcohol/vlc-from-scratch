@@ -1,7 +1,7 @@
 #pragma once
 
 #ifndef VLC_RX_HALF_BIT_US
-#define VLC_RX_HALF_BIT_US 100U
+#define VLC_RX_HALF_BIT_US 40U
 #endif
 
 #ifndef VLC_RX_SAMPLES_PER_HALF
