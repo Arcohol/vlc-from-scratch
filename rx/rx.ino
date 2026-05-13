@@ -23,14 +23,37 @@ void loop() {
   static uint32_t last_heartbeat_ms = 0;
   const uint32_t now_ms = millis();
 
-  if ((now_ms - last_heartbeat_ms) >= HEARTBEAT_INTERVAL_MS) {
-    last_heartbeat_ms = now_ms;
-    SerialUSB.print("heartbeat uptime_ms=");
-    SerialUSB.println(now_ms);
-  }
-
   if (adc_sampler_take_overrun()) {
     vlc_rx_reset();
+  }
+
+  if ((now_ms - last_heartbeat_ms) >= HEARTBEAT_INTERVAL_MS) {
+    last_heartbeat_ms = now_ms;
+    RxStats rx_stats;
+    vlc_rx_get_stats(&rx_stats);
+
+    SerialUSB.print("heartbeat uptime_ms=");
+    SerialUSB.print(now_ms);
+    SerialUSB.print(" rx_msg=");
+    SerialUSB.print(rx_stats.messages);
+    SerialUSB.print(" crc_fail=");
+    SerialUSB.print(rx_stats.crc_failures);
+    SerialUSB.print(" weak=");
+    SerialUSB.print(rx_stats.weak_bits);
+    SerialUSB.print(" lost=");
+    SerialUSB.print(rx_stats.lost_center_edges);
+    SerialUSB.print(" sfd_timeout=");
+    SerialUSB.print(rx_stats.sfd_timeouts);
+    SerialUSB.print(" qdrop=");
+    SerialUSB.print(rx_stats.queue_drops);
+    SerialUSB.print(" len_err=");
+    SerialUSB.print(rx_stats.length_errors);
+    SerialUSB.print(" adc_ovr=");
+    SerialUSB.print(adc_sampler_get_overrun_count());
+    SerialUSB.print(" swing=");
+    SerialUSB.print(rx_stats.signal_swing);
+    SerialUSB.print(" contrast=");
+    SerialUSB.println(rx_stats.contrast);
   }
 
   AdcBlock block;

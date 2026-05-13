@@ -49,8 +49,16 @@ volatile bool dma_has_next;
 volatile bool dma_stalled;
 volatile bool sampler_running;
 volatile bool sampler_overrun;
+volatile uint32_t sampler_overrun_count;
 
 bool queue_empty(uint8_t head, uint8_t tail) { return head == tail; }
+
+void note_sampler_overrun() {
+  sampler_overrun = true;
+  if (sampler_overrun_count < 0xFFFFFFFFUL) {
+    ++sampler_overrun_count;
+  }
+}
 
 bool completed_push_from_isr(uint8_t value) {
   uint8_t head = completed_head;
@@ -207,6 +215,7 @@ bool adc_sampler_begin() {
   }
 
   sampler_overrun = false;
+  sampler_overrun_count = 0;
   configure_timer_trigger();
   configure_adc(channel);
   sampler_running = true;
@@ -257,17 +266,23 @@ void adc_sampler_release_block(const AdcBlock *block) {
   noInterrupts();
   bool queued = free_push_from_main(block->index);
   adc_prime_next_if_possible();
-  interrupts();
-
   if (!queued) {
-    sampler_overrun = true;
+    note_sampler_overrun();
   }
+  interrupts();
 }
 
 bool adc_sampler_take_overrun() {
   noInterrupts();
   bool value = sampler_overrun;
   sampler_overrun = false;
+  interrupts();
+  return value;
+}
+
+uint32_t adc_sampler_get_overrun_count() {
+  noInterrupts();
+  uint32_t value = sampler_overrun_count;
   interrupts();
   return value;
 }
@@ -280,24 +295,29 @@ void ADC_Handler() {
   }
 
   uint8_t completed = dma_current;
+  bool overrun = false;
 
   if (dma_has_next) {
     dma_current = dma_next;
     dma_has_next = false;
   } else {
     dma_stalled = true;
-    sampler_overrun = true;
+    overrun = true;
   }
 
   bool published = completed_push_from_isr(completed);
   if (!published) {
-    sampler_overrun = true;
+    overrun = true;
 
     if (dma_stalled) {
       adc_set_current_buffer(completed);
     } else if (!dma_has_next) {
       adc_set_next_buffer(completed);
     }
+  }
+
+  if (overrun) {
+    note_sampler_overrun();
   }
 
   adc_prime_next_if_possible();

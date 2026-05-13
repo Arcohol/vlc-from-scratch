@@ -22,3 +22,4 @@ bool adc_sampler_pop_completed_block(AdcBlock *block);
 void adc_sampler_release_block(const AdcBlock *block);
 
 bool adc_sampler_take_overrun();
+uint32_t adc_sampler_get_overrun_count();

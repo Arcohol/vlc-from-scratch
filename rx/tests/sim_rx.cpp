@@ -50,6 +50,8 @@ std::vector<uint8_t> make_frame(const std::string &payload) {
 
 struct WaveformOptions {
   double half_samples = 8.0;
+  uint16_t low_level = 1000;
+  uint16_t high_level = 3000;
   bool invert = false;
   bool corrupt_payload_bit = false;
   int16_t drift_per_sample_times_1024 = 0;
@@ -82,7 +84,8 @@ void append_half(std::vector<uint16_t> *samples, bool high, double *time,
   uint32_t start_index = static_cast<uint32_t>(*time + 0.5);
   uint32_t end_index = static_cast<uint32_t>(next + 0.5);
   uint32_t count = end_index > start_index ? end_index - start_index : 1;
-  append_level(samples, high ? 3000 : 1000, count, options);
+  append_level(samples, high ? options.high_level : options.low_level, count,
+               options);
   *time = next;
 }
 
@@ -92,7 +95,7 @@ std::vector<uint16_t> make_waveform(const std::string &payload,
   std::vector<uint16_t> samples;
   double time = 0.0;
 
-  append_level(&samples, 3000, 96, options);
+  append_level(&samples, options.high_level, 96, options);
 
   uint32_t bit_index = 0;
   for (uint8_t byte : frame) {
@@ -112,7 +115,7 @@ std::vector<uint16_t> make_waveform(const std::string &payload,
     }
   }
 
-  append_level(&samples, 3000, 160, options);
+  append_level(&samples, options.high_level, 160, options);
   return samples;
 }
 
@@ -130,6 +133,26 @@ bool run_decode(const std::vector<uint16_t> &samples, std::string *message) {
 
   message->assign(reinterpret_cast<const char *>(rx_message.data), rx_message.len);
   return true;
+}
+
+std::vector<std::string> run_decode_stream(
+    const std::vector<std::vector<uint16_t>> &waveforms) {
+  std::vector<std::string> messages;
+  vlc_rx_init();
+
+  for (const auto &waveform : waveforms) {
+    for (uint16_t sample : waveform) {
+      vlc_rx_push_sample(sample);
+    }
+
+    RxMessage rx_message;
+    while (vlc_rx_pop_message(&rx_message)) {
+      messages.emplace_back(reinterpret_cast<const char *>(rx_message.data),
+                            rx_message.len);
+    }
+  }
+
+  return messages;
 }
 
 void expect_message(const std::string &payload,
@@ -151,6 +174,54 @@ void expect_no_message(const std::string &payload,
 
   if (ok) {
     std::fprintf(stderr, "unexpected message: '%s'\n", decoded.c_str());
+    std::abort();
+  }
+}
+
+void expect_contrast_drop_recovery() {
+  WaveformOptions dim;
+  dim.low_level = 1900;
+  dim.high_level = 2200;
+
+  std::vector<std::string> messages =
+      run_decode_stream({make_waveform("hello"), make_waveform("dim1", dim),
+                         make_waveform("dim2", dim)});
+
+  if (messages.size() < 2 || messages.front() != "hello" ||
+      messages.back() != "dim2") {
+    std::fprintf(stderr, "contrast recovery failed:");
+    for (const std::string &message : messages) {
+      std::fprintf(stderr, " '%s'", message.c_str());
+    }
+    std::fprintf(stderr, "\n");
+    std::abort();
+  }
+}
+
+void expect_message_after_long_uptime() {
+  vlc_rx_init();
+
+  constexpr uint32_t kSignedQ8OverflowSamples = 0x80000000ULL / 256U;
+  for (uint32_t i = 0; i < kSignedQ8OverflowSamples + 512U; ++i) {
+    vlc_rx_push_sample(3000);
+  }
+
+  std::vector<uint16_t> waveform = make_waveform("late");
+  for (uint16_t sample : waveform) {
+    vlc_rx_push_sample(sample);
+  }
+
+  RxMessage rx_message;
+  if (!vlc_rx_pop_message(&rx_message)) {
+    std::fprintf(stderr, "long uptime decode failed: no message\n");
+    std::abort();
+  }
+
+  std::string decoded(reinterpret_cast<const char *>(rx_message.data),
+                      rx_message.len);
+  if (decoded != "late") {
+    std::fprintf(stderr, "long uptime decode failed: got '%s'\n",
+                 decoded.c_str());
     std::abort();
   }
 }
@@ -181,6 +252,9 @@ int main() {
   WaveformOptions corrupt;
   corrupt.corrupt_payload_bit = true;
   expect_no_message("hello", corrupt);
+
+  expect_contrast_drop_recovery();
+  expect_message_after_long_uptime();
 
   std::puts("sim_rx: all tests passed");
   return 0;

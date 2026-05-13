@@ -14,6 +14,8 @@ constexpr uint8_t kMessageQueueDepth = 4;
 constexpr uint8_t kMessageQueueMask = kMessageQueueDepth - 1;
 static_assert((kMessageQueueDepth & kMessageQueueMask) == 0,
               "message queue depth must be power of two");
+static_assert(VLC_RX_MAX_PAYLOAD_LEN <= 255U,
+              "RxMessage::len stores the payload length in one byte");
 
 constexpr uint16_t kMinSignalSwingCounts = 60;
 constexpr uint16_t kMinHysteresisCounts = 18;
@@ -68,7 +70,7 @@ struct SearchState {
 };
 
 struct TimingState {
-  int32_t center_q8;
+  int64_t center_q8;
   int32_t period_q8;
   int16_t pending_phase_correction_q8;
   bool saw_center_edge;
@@ -103,6 +105,7 @@ uint8_t sfd_bits_seen;
 RxMessage message_queue[kMessageQueueDepth];
 uint8_t message_head;
 uint8_t message_tail;
+RxStats rx_stats;
 
 int32_t clamp_i32(int32_t value, int32_t low, int32_t high) {
   if (value < low) {
@@ -128,12 +131,17 @@ uint16_t abs_i32_to_u16(int32_t value) {
   return static_cast<uint16_t>(value);
 }
 
-uint32_t round_q8_to_u32(int32_t value_q8) {
+uint32_t round_q8_to_u32(int64_t value_q8) {
   if (value_q8 <= 0) {
     return 0;
   }
 
-  return static_cast<uint32_t>((value_q8 + (kQ8 / 2)) / kQ8);
+  int64_t rounded = (value_q8 + (kQ8 / 2)) / kQ8;
+  if (rounded > 0xFFFFFFFFLL) {
+    return 0xFFFFFFFFUL;
+  }
+
+  return static_cast<uint32_t>(rounded);
 }
 
 uint16_t crc16_update(uint16_t crc, uint8_t byte) {
@@ -292,7 +300,7 @@ void begin_sfd_search(uint32_t edge_index) {
   sfd_bits_seen = 0;
 
   timing_state.center_q8 =
-      (static_cast<int32_t>(edge_index) * kQ8) + search_state.period_q8;
+      (static_cast<int64_t>(edge_index) * kQ8) + search_state.period_q8;
   timing_state.period_q8 =
       clamp_i32(search_state.period_q8, kMinPeriodQ8, kMaxPeriodQ8);
   timing_state.pending_phase_correction_q8 = 0;
@@ -344,8 +352,7 @@ void pll_handle_edge(const EdgeEvent &edge) {
   }
 
   uint32_t expected = round_q8_to_u32(timing_state.center_q8);
-  int32_t error =
-      static_cast<int32_t>(edge.sample_index) - static_cast<int32_t>(expected);
+  int32_t error = static_cast<int32_t>(edge.sample_index - expected);
   int32_t tolerance = (timing_state.period_q8 / kQ8) / 4;
 
   if (tolerance < 3) {
@@ -379,6 +386,7 @@ bool push_message() {
   uint8_t next = static_cast<uint8_t>((message_head + 1U) & kMessageQueueMask);
 
   if (next == message_tail) {
+    ++rx_stats.queue_drops;
     return false;
   }
 
@@ -390,12 +398,21 @@ bool push_message() {
   }
 
   message_head = next;
+  ++rx_stats.messages;
   return true;
 }
 
 void parser_process_byte(uint8_t byte) {
   switch (rx_state) {
     case RxState::ReadLength:
+#if VLC_RX_MAX_PAYLOAD_LEN < 255U
+      if (byte > VLC_RX_MAX_PAYLOAD_LEN) {
+        ++rx_stats.length_errors;
+        reset_search();
+        break;
+      }
+#endif
+
       parser_state.length = byte;
       parser_state.payload_pos = 0;
       parser_state.crc_calc = crc16_update(kCrcInit, byte);
@@ -420,6 +437,8 @@ void parser_process_byte(uint8_t byte) {
       parser_state.crc_rx |= byte;
       if (parser_state.crc_rx == parser_state.crc_calc) {
         (void)push_message();
+      } else {
+        ++rx_stats.crc_failures;
       }
       reset_search();
       break;
@@ -464,6 +483,7 @@ void consume_decoded_bit(bool normal_bit) {
     }
 
     if (sfd_bits_seen > kSfdSearchMaxBits) {
+      ++rx_stats.sfd_timeouts;
       reset_search();
     }
 
@@ -484,6 +504,8 @@ void finish_decoded_bit(bool normal_bit, uint16_t strength) {
   if (timing_state.saw_center_edge) {
     timing_state.lost_center_edges = 0;
   } else if (++timing_state.lost_center_edges > kMaxLostCenterEdges) {
+    ++rx_stats.lost_center_edges;
+    contrast_estimate = 0;
     reset_search();
     return;
   }
@@ -518,6 +540,8 @@ void update_scheduled_decode(uint16_t sample) {
     uint16_t threshold = decode_threshold_counts();
 
     if (strength < threshold) {
+      ++rx_stats.weak_bits;
+      contrast_estimate = 0;
       reset_search();
       return;
     }
@@ -534,6 +558,7 @@ void vlc_rx_init() {
   contrast_estimate = 0;
   message_head = 0;
   message_tail = 0;
+  memset(&rx_stats, 0, sizeof(rx_stats));
   reset_search();
 }
 
@@ -567,4 +592,14 @@ bool vlc_rx_pop_message(RxMessage *message) {
   *message = message_queue[message_tail];
   message_tail = static_cast<uint8_t>((message_tail + 1U) & kMessageQueueMask);
   return true;
+}
+
+void vlc_rx_get_stats(RxStats *stats) {
+  if (stats == nullptr) {
+    return;
+  }
+
+  *stats = rx_stats;
+  stats->signal_swing = current_swing();
+  stats->contrast = contrast_estimate;
 }
