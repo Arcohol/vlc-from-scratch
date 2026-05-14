@@ -18,6 +18,7 @@
       let
         pkgs = import nixpkgs { inherit system; };
         buildInputs = with pkgs; [
+          cmake
           (python3.withPackages (
             ps: with ps; [
               matplotlib
