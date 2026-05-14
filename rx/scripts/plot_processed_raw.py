@@ -104,6 +104,7 @@ class SamplePlot:
         auto_y: bool,
         line_width: float,
         marker_size: float,
+        show_quantized: bool,
     ) -> None:
         import matplotlib.pyplot as plt
 
@@ -114,6 +115,10 @@ class SamplePlot:
         self.x_scale = 1.0 / sample_rate if sample_rate else 1.0
         self.max_points = max(100, max_points)
         self.auto_y = auto_y
+        self.show_quantized = show_quantized
+        self.value_min = min(values)
+        self.value_max = max(values)
+        self.quantize_threshold = (self.value_min + self.value_max) / 2.0
         self.drag_start_x: Optional[float] = None
         self.drag_start_view: Optional[tuple[float, float]] = None
 
@@ -125,10 +130,21 @@ class SamplePlot:
             marker=".",
             markersize=marker_size,
             markeredgewidth=0,
+            label="raw",
+        )
+        (self.quantized_line,) = self.ax.plot(
+            [],
+            [],
+            lw=max(1.0, line_width),
+            drawstyle="steps-post",
+            color="tab:orange",
+            alpha=0.85,
+            label="quantized",
         )
         self.ax.set_xlabel("time (s)" if sample_rate else "sample")
         self.ax.set_ylabel("sample value")
         self.ax.grid(True, alpha=0.25)
+        self.ax.legend(loc="upper right")
         if not auto_y:
             self.ax.set_ylim(0, 2047)
 
@@ -190,19 +206,30 @@ class SamplePlot:
         visible = [self.values[index] for index in indices]
 
         self.line.set_data(x_values, visible)
+        if self.show_quantized:
+            quantized = [
+                self.value_max if value >= self.quantize_threshold else self.value_min
+                for value in visible
+            ]
+            self.quantized_line.set_data(x_values, quantized)
+        else:
+            quantized = []
+            self.quantized_line.set_data([], [])
         self.ax.set_xlim(
             self.sample_to_x(self.view_start), self.sample_to_x(self.view_end)
         )
 
         if self.auto_y and visible:
-            y_min = float(min(visible))
-            y_max = float(max(visible))
+            y_values = visible + quantized
+            y_min = float(min(y_values))
+            y_max = float(max(y_values))
             padding = max(1.0, (y_max - y_min) * 0.05)
             self.ax.set_ylim(y_min - padding, y_max + padding)
 
         self.ax.set_title(
             f"{self.title}  samples={len(self.values)}  "
-            f"view={int(self.view_start)}:{int(self.view_end)}  stride={stride}"
+            f"view={int(self.view_start)}:{int(self.view_end)}  stride={stride}  "
+            f"threshold={self.quantize_threshold:g}"
         )
         self.fig.canvas.draw_idle()
 
@@ -278,6 +305,7 @@ def plot(args: argparse.Namespace) -> int:
         auto_y=args.auto_y,
         line_width=args.line_width,
         marker_size=args.marker_size,
+        show_quantized=args.quantized,
     )
     plotter.show()
     return 0
@@ -319,6 +347,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--line-width", type=float, default=1.0)
     parser.add_argument("--marker-size", type=float, default=8.0)
+    parser.add_argument(
+        "--no-quantized",
+        dest="quantized",
+        action="store_false",
+        help="hide the midpoint-threshold quantized overlay",
+    )
+    parser.set_defaults(quantized=True)
     parser.add_argument("--title")
     parser.set_defaults(func=plot)
     return parser
