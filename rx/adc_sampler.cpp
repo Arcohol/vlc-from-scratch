@@ -11,7 +11,8 @@ namespace {
 constexpr uint8_t kAdcPin = A0;
 constexpr uint8_t kBufferCount = 8;
 constexpr uint8_t kQueueMask = kBufferCount - 1;
-static_assert((kBufferCount & kQueueMask) == 0, "buffer count must be power of two");
+static_assert((kBufferCount & kQueueMask) == 0,
+              "buffer count must be power of two");
 
 #ifndef ADC_MR_TRGSEL_ADC_TRIG1
 #define ADC_MR_TRGSEL_ADC_TRIG1 (1U << 1)
@@ -146,9 +147,8 @@ void configure_timer_trigger() {
 
   TC_Stop(TC0, 0);
   TC_Configure(TC0, 0,
-               TC_CMR_TCCLKS_TIMER_CLOCK1 | TC_CMR_WAVE |
-                   TC_CMR_WAVSEL_UP_RC | TC_CMR_ACPA_CLEAR |
-                   TC_CMR_ACPC_SET);
+               TC_CMR_TCCLKS_TIMER_CLOCK1 | TC_CMR_WAVE | TC_CMR_WAVSEL_UP_RC |
+                   TC_CMR_ACPA_CLEAR | TC_CMR_ACPC_SET);
 
   uint32_t rc = VARIANT_MCK / 2U / VLC_RX_SAMPLE_RATE_HZ;
   if (rc < 2U) {
@@ -167,10 +167,9 @@ void configure_adc(uint32_t channel) {
   ADC->ADC_IDR = 0xFFFFFFFFU;
   ADC->ADC_CHDR = 0xFFFFFFFFU;
 
-  ADC->ADC_MR =
-      ADC_MR_TRGEN_EN | ADC_MR_TRGSEL_ADC_TRIG1 | ADC_MR_PRESCAL(1) |
-      ADC_MR_STARTUP_SUT64 | ADC_MR_SETTLING_AST3 | ADC_MR_TRACKTIM(3) |
-      ADC_MR_TRANSFER(1);
+  ADC->ADC_MR = ADC_MR_TRGEN_EN | ADC_MR_TRGSEL_ADC_TRIG1 | ADC_MR_PRESCAL(1) |
+                ADC_MR_STARTUP_SUT64 | ADC_MR_SETTLING_AST3 |
+                ADC_MR_TRACKTIM(3) | ADC_MR_TRANSFER(1);
 
   ADC->ADC_EMR = 0;
   ADC->ADC_CGR = 0;
@@ -201,7 +200,7 @@ void start_pdc() {
   ADC->ADC_PTCR = ADC_PTCR_RXTEN;
 }
 
-}  // namespace
+} // namespace
 
 bool adc_sampler_begin() {
   if (sampler_running) {

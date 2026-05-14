@@ -60,8 +60,8 @@ struct WaveformOptions {
 void append_level(std::vector<uint16_t> *samples, uint16_t level,
                   uint32_t count, const WaveformOptions &options) {
   for (uint32_t i = 0; i < count; ++i) {
-    int32_t drift =
-        static_cast<int32_t>(samples->size()) * options.drift_per_sample_times_1024;
+    int32_t drift = static_cast<int32_t>(samples->size()) *
+                    options.drift_per_sample_times_1024;
     int32_t value = static_cast<int32_t>(level) + (drift / 1024);
 
     if (options.invert) {
@@ -131,12 +131,13 @@ bool run_decode(const std::vector<uint16_t> &samples, std::string *message) {
     return false;
   }
 
-  message->assign(reinterpret_cast<const char *>(rx_message.data), rx_message.len);
+  message->assign(reinterpret_cast<const char *>(rx_message.data),
+                  rx_message.len);
   return true;
 }
 
-std::vector<std::string> run_decode_stream(
-    const std::vector<std::vector<uint16_t>> &waveforms) {
+std::vector<std::string>
+run_decode_stream(const std::vector<std::vector<uint16_t>> &waveforms) {
   std::vector<std::string> messages;
   vlc_rx_init();
 
@@ -226,7 +227,7 @@ void expect_message_after_long_uptime() {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   expect_message("hello");

@@ -171,11 +171,13 @@ void reset_search() {
 }
 
 uint16_t current_swing() {
-  if (!edge_tracker.initialized || edge_tracker.high_q8 <= edge_tracker.low_q8) {
+  if (!edge_tracker.initialized ||
+      edge_tracker.high_q8 <= edge_tracker.low_q8) {
     return 0;
   }
 
-  return static_cast<uint16_t>((edge_tracker.high_q8 - edge_tracker.low_q8) >> 8);
+  return static_cast<uint16_t>((edge_tracker.high_q8 - edge_tracker.low_q8) >>
+                               8);
 }
 
 uint16_t hysteresis_counts() {
@@ -214,11 +216,10 @@ void update_contrast(uint16_t strength) {
     return;
   }
 
-  int32_t delta = static_cast<int32_t>(strength) -
-                  static_cast<int32_t>(contrast_estimate);
+  int32_t delta =
+      static_cast<int32_t>(strength) - static_cast<int32_t>(contrast_estimate);
   contrast_estimate = static_cast<uint16_t>(
-      static_cast<int32_t>(contrast_estimate) +
-      (delta >> kContrastAdaptShift));
+      static_cast<int32_t>(contrast_estimate) + (delta >> kContrastAdaptShift));
 }
 
 bool update_edge_tracker(uint16_t sample, EdgeEvent *edge) {
@@ -235,7 +236,8 @@ bool update_edge_tracker(uint16_t sample, EdgeEvent *edge) {
   if (sample_q8 < edge_tracker.low_q8) {
     edge_tracker.low_q8 += (sample_q8 - edge_tracker.low_q8) >> 2;
   } else {
-    edge_tracker.low_q8 += (sample_q8 - edge_tracker.low_q8) >> kSignalAdaptShift;
+    edge_tracker.low_q8 +=
+        (sample_q8 - edge_tracker.low_q8) >> kSignalAdaptShift;
   }
 
   if (sample_q8 > edge_tracker.high_q8) {
@@ -365,9 +367,8 @@ void pll_handle_edge(const EdgeEvent &edge) {
 
   timing_state.pending_phase_correction_q8 =
       static_cast<int16_t>(clamp_i32(error * 64, -128, 128));
-  timing_state.period_q8 =
-      clamp_i32(timing_state.period_q8 + (error * 8), kMinPeriodQ8,
-                kMaxPeriodQ8);
+  timing_state.period_q8 = clamp_i32(timing_state.period_q8 + (error * 8),
+                                     kMinPeriodQ8, kMaxPeriodQ8);
   timing_state.saw_center_edge = true;
 }
 
@@ -404,55 +405,55 @@ bool push_message() {
 
 void parser_process_byte(uint8_t byte) {
   switch (rx_state) {
-    case RxState::ReadLength:
+  case RxState::ReadLength:
 #if VLC_RX_MAX_PAYLOAD_LEN < 255U
-      if (byte > VLC_RX_MAX_PAYLOAD_LEN) {
-        ++rx_stats.length_errors;
-        reset_search();
-        break;
-      }
+    if (byte > VLC_RX_MAX_PAYLOAD_LEN) {
+      ++rx_stats.length_errors;
+      reset_search();
+      break;
+    }
 #endif
 
-      parser_state.length = byte;
-      parser_state.payload_pos = 0;
-      parser_state.crc_calc = crc16_update(kCrcInit, byte);
-      rx_state =
-          parser_state.length == 0U ? RxState::ReadCrcHigh : RxState::ReadPayload;
-      break;
+    parser_state.length = byte;
+    parser_state.payload_pos = 0;
+    parser_state.crc_calc = crc16_update(kCrcInit, byte);
+    rx_state =
+        parser_state.length == 0U ? RxState::ReadCrcHigh : RxState::ReadPayload;
+    break;
 
-    case RxState::ReadPayload:
-      parser_state.payload[parser_state.payload_pos++] = byte;
-      parser_state.crc_calc = crc16_update(parser_state.crc_calc, byte);
-      if (parser_state.payload_pos >= parser_state.length) {
-        rx_state = RxState::ReadCrcHigh;
-      }
-      break;
+  case RxState::ReadPayload:
+    parser_state.payload[parser_state.payload_pos++] = byte;
+    parser_state.crc_calc = crc16_update(parser_state.crc_calc, byte);
+    if (parser_state.payload_pos >= parser_state.length) {
+      rx_state = RxState::ReadCrcHigh;
+    }
+    break;
 
-    case RxState::ReadCrcHigh:
-      parser_state.crc_rx = static_cast<uint16_t>(byte) << 8;
-      rx_state = RxState::ReadCrcLow;
-      break;
+  case RxState::ReadCrcHigh:
+    parser_state.crc_rx = static_cast<uint16_t>(byte) << 8;
+    rx_state = RxState::ReadCrcLow;
+    break;
 
-    case RxState::ReadCrcLow:
-      parser_state.crc_rx |= byte;
-      if (parser_state.crc_rx == parser_state.crc_calc) {
-        (void)push_message();
-      } else {
-        ++rx_stats.crc_failures;
-      }
-      reset_search();
-      break;
+  case RxState::ReadCrcLow:
+    parser_state.crc_rx |= byte;
+    if (parser_state.crc_rx == parser_state.crc_calc) {
+      (void)push_message();
+    } else {
+      ++rx_stats.crc_failures;
+    }
+    reset_search();
+    break;
 
-    default:
-      reset_search();
-      break;
+  default:
+    reset_search();
+    break;
   }
 }
 
 void consume_frame_bit(bool normal_bit) {
   bool bit = parser_state.invert_polarity ? !normal_bit : normal_bit;
-  parser_state.byte_acc = static_cast<uint8_t>((parser_state.byte_acc << 1) |
-                                               (bit ? 1U : 0U));
+  parser_state.byte_acc =
+      static_cast<uint8_t>((parser_state.byte_acc << 1) | (bit ? 1U : 0U));
   ++parser_state.bit_count;
 
   if (parser_state.bit_count == 8U) {
@@ -467,8 +468,8 @@ void consume_decoded_bit(bool normal_bit) {
   if (rx_state == RxState::FindSfd) {
     sfd_shift_normal =
         static_cast<uint8_t>((sfd_shift_normal << 1) | (normal_bit ? 1U : 0U));
-    sfd_shift_inverted = static_cast<uint8_t>(
-        (sfd_shift_inverted << 1) | (normal_bit ? 0U : 1U));
+    sfd_shift_inverted = static_cast<uint8_t>((sfd_shift_inverted << 1) |
+                                              (normal_bit ? 0U : 1U));
 
     ++sfd_bits_seen;
 
@@ -510,8 +511,8 @@ void finish_decoded_bit(bool normal_bit, uint16_t strength) {
     return;
   }
 
-  timing_state.center_q8 += timing_state.period_q8 +
-                            timing_state.pending_phase_correction_q8;
+  timing_state.center_q8 +=
+      timing_state.period_q8 + timing_state.pending_phase_correction_q8;
   timing_state.pending_phase_correction_q8 = 0;
   timing_state.saw_center_edge = false;
   timing_state.have_first_sample = false;
@@ -550,7 +551,7 @@ void update_scheduled_decode(uint16_t sample) {
   }
 }
 
-}  // namespace
+} // namespace
 
 void vlc_rx_init() {
   memset(&edge_tracker, 0, sizeof(edge_tracker));

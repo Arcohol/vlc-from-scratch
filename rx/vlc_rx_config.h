@@ -13,7 +13,7 @@
 #endif
 
 #ifndef VLC_RX_SAMPLE_RATE_HZ
-#define VLC_RX_SAMPLE_RATE_HZ \
+#define VLC_RX_SAMPLE_RATE_HZ                                                  \
   ((1000000UL * VLC_RX_SAMPLES_PER_HALF) / VLC_RX_HALF_BIT_US)
 #endif
 
