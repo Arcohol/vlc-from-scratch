@@ -19,7 +19,9 @@ PERIOD_RE = re.compile(
     r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>ns|us|µs|μs|ms|s)(?:[_-]|$)",
     re.IGNORECASE,
 )
-SIZE_RE = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>[kmgt]i?b?|b)?$", re.IGNORECASE)
+SIZE_RE = re.compile(
+    r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>[kmgt]i?b?|b)?$", re.IGNORECASE
+)
 COUNT_RE = re.compile(r"^(?P<value>\d+(?:\.\d+)?)(?P<unit>[kmgt])?$", re.IGNORECASE)
 
 
@@ -133,10 +135,14 @@ def read_adc_samples(path: Path) -> Iterator[int]:
             try:
                 yield int(line)
             except ValueError as exc:
-                raise ValueError(f"{path}:{line_number}: expected an integer ADC sample") from exc
+                raise ValueError(
+                    f"{path}:{line_number}: expected an integer ADC sample"
+                ) from exc
 
 
-def resample_linear(samples: Iterable[int], step_input_samples: Fraction) -> Iterator[int]:
+def resample_linear(
+    samples: Iterable[int], step_input_samples: Fraction
+) -> Iterator[int]:
     iterator = iter(samples)
     try:
         previous = next(iterator)
@@ -200,7 +206,9 @@ class ChunkedWriter:
         path = self.output_dir / f"{self.output_stem}_part{self.part_index:04d}.raw"
         self.part_index += 1
         if path.exists() and not self.overwrite:
-            raise FileExistsError(f"{path} already exists; pass --overwrite to replace it")
+            raise FileExistsError(
+                f"{path} already exists; pass --overwrite to replace it"
+            )
         return path
 
     def _open_next(self) -> None:
@@ -215,13 +223,21 @@ class ChunkedWriter:
     def write_sample(self, sample: int) -> None:
         line = f"{sample}\n".encode("ascii")
         if self.max_bytes is not None and len(line) > self.max_bytes:
-            raise ValueError(f"one encoded sample is larger than the chunk limit: {line!r}")
+            raise ValueError(
+                f"one encoded sample is larger than the chunk limit: {line!r}"
+            )
 
         should_roll = self.current_handle is None
         if self.current_handle is not None:
-            if self.max_samples is not None and self.current_samples >= self.max_samples:
+            if (
+                self.max_samples is not None
+                and self.current_samples >= self.max_samples
+            ):
                 should_roll = True
-            if self.max_bytes is not None and self.current_bytes + len(line) > self.max_bytes:
+            if (
+                self.max_bytes is not None
+                and self.current_bytes + len(line) > self.max_bytes
+            ):
                 should_roll = True
 
         if should_roll:
@@ -259,7 +275,9 @@ def convert_file(
     )
 
     sample_count = 0
-    with ChunkedWriter(output_dir, output_stem, max_samples, max_bytes, overwrite) as writer:
+    with ChunkedWriter(
+        output_dir, output_stem, max_samples, max_bytes, overwrite
+    ) as writer:
         for sample in resample_linear(read_adc_samples(input_path), step_input_samples):
             writer.write_sample(sample)
             sample_count += 1
@@ -329,7 +347,9 @@ def main() -> int:
     if max_bytes is not None and max_bytes <= 0:
         parser.error("--max-bytes must be greater than zero")
     if max_samples == 0 and max_bytes is None:
-        parser.error("at least one chunk limit is required; set --max-samples or --max-bytes")
+        parser.error(
+            "at least one chunk limit is required; set --max-samples or --max-bytes"
+        )
 
     max_samples_limit = max_samples or None
     if args.input_rate <= 0:
