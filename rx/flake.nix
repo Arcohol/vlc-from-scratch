@@ -24,6 +24,7 @@
               matplotlib
             ]
           ))
+          clang-tools
         ];
         treefmtEval = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";

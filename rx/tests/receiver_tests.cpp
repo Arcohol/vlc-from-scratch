@@ -45,39 +45,65 @@ std::vector<uint8_t> frameBits(const std::vector<uint8_t> &frame) {
   return bits;
 }
 
-std::vector<uint16_t> encodeSamples(const std::vector<uint8_t> &payload,
-                                    double half_samples = 8.0,
-                                    double drift_per_sample = 0.0,
-                                    bool corrupt_crc = false) {
-  const std::vector<uint8_t> bits = frameBits(buildFrame(payload, corrupt_crc));
-  std::vector<bool> levels;
-  for (uint8_t bit : bits) {
-    if (bit == 0) {
-      levels.push_back(true);
-      levels.push_back(false);
-    } else {
-      levels.push_back(false);
-      levels.push_back(true);
-    }
+struct WaveformOptions {
+  double half_samples = 8.0;
+  uint16_t low_level = 420;
+  uint16_t high_level = 780;
+  double drift_per_sample = 0.0;
+  bool corrupt_crc = false;
+};
+
+void appendSample(std::vector<uint16_t> *samples, uint16_t level,
+                  const WaveformOptions &options) {
+  double value =
+      static_cast<double>(level) +
+      options.drift_per_sample * static_cast<double>(samples->size());
+  if (value < 0.0) {
+    value = 0.0;
+  } else if (value > 4095.0) {
+    value = 4095.0;
   }
+  samples->push_back(static_cast<uint16_t>(value + 0.5));
+}
+
+void appendLevel(std::vector<uint16_t> *samples, uint16_t level, uint32_t count,
+                 const WaveformOptions &options) {
+  for (uint32_t i = 0; i < count; ++i) {
+    appendSample(samples, level, options);
+  }
+}
+
+void appendHalf(std::vector<uint16_t> *samples, bool high, double *time,
+                const WaveformOptions &options) {
+  const double next = *time + options.half_samples;
+  const uint32_t start = static_cast<uint32_t>(*time + 0.5);
+  const uint32_t end = static_cast<uint32_t>(next + 0.5);
+  const uint32_t count = end > start ? end - start : 1;
+  appendLevel(samples, high ? options.high_level : options.low_level, count,
+              options);
+  *time = next;
+}
+
+std::vector<uint16_t> encodeSamples(const std::vector<uint8_t> &payload,
+                                    const WaveformOptions &options = {}) {
+  const std::vector<uint8_t> bits =
+      frameBits(buildFrame(payload, options.corrupt_crc));
 
   std::vector<uint16_t> samples;
-  samples.insert(samples.end(), 96, 600);
+  appendLevel(&samples, options.high_level, 96, options);
 
   double position = static_cast<double>(samples.size());
-  for (bool high : levels) {
-    const double next_position = position + half_samples;
-    const int end = static_cast<int>(std::floor(next_position + 0.5));
-    while (static_cast<int>(samples.size()) < end) {
-      const double baseline =
-          600.0 + drift_per_sample * static_cast<double>(samples.size());
-      const double value = high ? baseline + 180.0 : baseline - 180.0;
-      samples.push_back(static_cast<uint16_t>(value + 0.5));
+  for (uint8_t bit : bits) {
+    if (bit == 0) {
+      appendHalf(&samples, true, &position, options);
+      appendHalf(&samples, false, &position, options);
+    } else {
+      appendHalf(&samples, false, &position, options);
+      appendHalf(&samples, true, &position, options);
     }
-    position = next_position;
   }
 
-  samples.insert(samples.end(), 96, samples.empty() ? 600 : samples.back());
+  appendLevel(&samples, options.high_level, 160, options);
   return samples;
 }
 
@@ -88,6 +114,21 @@ std::vector<Message> decodeAll(const std::vector<uint16_t> &samples) {
     Message message;
     if (decoder.pushSample(sample, &message)) {
       messages.push_back(message);
+    }
+  }
+  return messages;
+}
+
+std::vector<Message>
+decodeStream(const std::vector<std::vector<uint16_t>> &waveforms) {
+  ManchesterDecoder decoder;
+  std::vector<Message> messages;
+  for (const std::vector<uint16_t> &waveform : waveforms) {
+    for (uint16_t sample : waveform) {
+      Message message;
+      if (decoder.pushSample(sample, &message)) {
+        messages.push_back(message);
+      }
     }
   }
   return messages;
@@ -141,24 +182,86 @@ void testBinaryPayload() {
 
 void testCrcReject() {
   const std::vector<uint8_t> payload = {'b', 'a', 'd'};
+  WaveformOptions options;
+  options.corrupt_crc = true;
   const std::vector<Message> messages =
-      decodeAll(encodeSamples(payload, 8.0, 0.0, true));
+      decodeAll(encodeSamples(payload, options));
   require(messages.empty(), "CRC-corrupt payload should not decode");
 }
 
 void testSlowThresholdDrift() {
   const std::vector<uint8_t> payload = {'d', 'r', 'i', 'f', 't'};
+  WaveformOptions options;
+  options.drift_per_sample = 0.02;
   const std::vector<Message> messages =
-      decodeAll(encodeSamples(payload, 8.0, 0.02));
+      decodeAll(encodeSamples(payload, options));
   require(messages.size() == 1, "slow ADC drift should decode once");
   requirePayload(messages[0], payload);
 }
 
 void testPhaseDrift() {
   const std::vector<uint8_t> payload = {'p', 'h', 'a', 's', 'e'};
-  const std::vector<Message> messages = decodeAll(encodeSamples(payload, 8.03));
+  WaveformOptions options;
+  options.half_samples = 8.03;
+  const std::vector<Message> messages =
+      decodeAll(encodeSamples(payload, options));
   require(messages.size() == 1, "fractional timing drift should decode once");
   requirePayload(messages[0], payload);
+}
+
+void testFastAndSlowTransmitters() {
+  const std::vector<uint8_t> slow_payload = {'s', 'l', 'o', 'w'};
+  WaveformOptions slow;
+  slow.half_samples = 8.25;
+  std::vector<Message> messages = decodeAll(encodeSamples(slow_payload, slow));
+  require(messages.size() == 1, "slow transmitter should decode once");
+  requirePayload(messages[0], slow_payload);
+
+  const std::vector<uint8_t> fast_payload = {'f', 'a', 's', 't'};
+  WaveformOptions fast;
+  fast.half_samples = 7.75;
+  messages = decodeAll(encodeSamples(fast_payload, fast));
+  require(messages.size() == 1, "fast transmitter should decode once");
+  requirePayload(messages[0], fast_payload);
+}
+
+void testLowContrastRecovery() {
+  const std::vector<uint8_t> hello = {'h', 'e', 'l', 'l', 'o'};
+  const std::vector<uint8_t> dim1 = {'d', 'i', 'm', '1'};
+  const std::vector<uint8_t> dim2 = {'d', 'i', 'm', '2'};
+
+  WaveformOptions dim;
+  dim.low_level = 500;
+  dim.high_level = 800;
+
+  const std::vector<Message> messages =
+      decodeStream({encodeSamples(hello), encodeSamples(dim1, dim),
+                    encodeSamples(dim2, dim)});
+  require(messages.size() >= 2, "low-contrast stream should recover");
+  requirePayload(messages.front(), hello);
+  requirePayload(messages.back(), dim2);
+}
+
+void testMessageAfterLongUptime() {
+  ManchesterDecoder decoder;
+  const uint32_t samples_before_message = 0x80000000ULL / 256U + 512U;
+  for (uint32_t i = 0; i < samples_before_message; ++i) {
+    Message ignored;
+    decoder.pushSample(780, &ignored);
+  }
+
+  const std::vector<uint8_t> payload = {'l', 'a', 't', 'e'};
+  bool decoded = false;
+  Message message;
+  for (uint16_t sample : encodeSamples(payload)) {
+    if (decoder.pushSample(sample, &message)) {
+      decoded = true;
+      break;
+    }
+  }
+
+  require(decoded, "message after long uptime should decode");
+  requirePayload(message, payload);
 }
 
 } // namespace
@@ -171,6 +274,9 @@ int main() {
   testCrcReject();
   testSlowThresholdDrift();
   testPhaseDrift();
+  testFastAndSlowTransmitters();
+  testLowContrastRecovery();
+  testMessageAfterLongUptime();
 
   std::cout << "receiver_tests: all tests passed\n";
   return 0;

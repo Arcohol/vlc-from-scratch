@@ -220,6 +220,18 @@ void printMessage(const receiver::Message &message, uint64_t sample_index) {
             << hexPayload(message) << "]\n";
 }
 
+void printStats(const receiver::DecoderStats &stats) {
+  std::cerr << "decoder stats:"
+            << " messages=" << stats.messages
+            << " crc_failures=" << stats.crc_failures
+            << " sfd_timeouts=" << stats.sfd_timeouts
+            << " weak_bits=" << stats.weak_bits
+            << " lost_center_edges=" << stats.lost_center_edges
+            << " length_errors=" << stats.length_errors
+            << " signal_swing=" << stats.signal_swing
+            << " contrast=" << stats.contrast << '\n';
+}
+
 void processFile(const std::string &path, receiver::ManchesterDecoder *decoder,
                  bool summary_only, uint64_t *sample_index,
                  uint32_t *message_count) {
@@ -277,6 +289,9 @@ int main(int argc, char **argv) {
     std::cout.flush();
     std::cerr << "processed " << sample_index << " samples, decoded "
               << message_count << " message(s)\n";
+    if (options.summary_only) {
+      printStats(decoder.stats());
+    }
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "receiver_sim: " << error.what() << '\n';
