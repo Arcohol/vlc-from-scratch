@@ -397,14 +397,12 @@ bool ManchesterDecoder::updateScheduledDecode(uint16_t sample, Message *out) {
     const uint16_t strength = absI32ToU16(delta);
     const uint16_t threshold = decodeThresholdCounts();
 
-    // Bits are decided from raw ADC contrast, not from quantized levels. If the
-    // two half-bit samples are too close, reset rather than feeding likely
-    // noise into the frame parser.
+    // Bits are decided from the sign of the half-bit contrast. Low contrast is
+    // still tracked, but this stable capture showed that throwing those bits
+    // away caused packet erasures while their polarity was still reliable.
     if (strength < threshold) {
       ++stats_.weak_bits;
-      contrast_estimate_ = 0;
-      resetSearch();
-      return false;
+      return finishDecodedBit(delta > 0, threshold, out);
     }
 
     return finishDecodedBit(delta > 0, strength, out);

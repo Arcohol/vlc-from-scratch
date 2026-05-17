@@ -225,6 +225,33 @@ void testFastAndSlowTransmitters() {
   requirePayload(messages[0], fast_payload);
 }
 
+void testSignedWeakBitDecodes() {
+  const std::vector<uint8_t> payload = {'H', 'e', 'l', 'l', 'o', ',',
+                                        ' ', 'w', 'o', 'r', 'l', 'd'};
+  std::vector<uint16_t> samples = encodeSamples(payload);
+
+  const uint32_t weak_bit_index = (4U + 1U + 1U + 10U) * 8U;
+  const uint32_t weak_bit_start = 96U + weak_bit_index * 16U;
+  for (uint32_t i = 0; i < 8U; ++i) {
+    samples[weak_bit_start + i] = 450;
+    samples[weak_bit_start + 8U + i] = 430;
+  }
+
+  ManchesterDecoder decoder;
+  std::vector<Message> messages;
+  for (uint16_t sample : samples) {
+    Message message;
+    if (decoder.pushSample(sample, &message)) {
+      messages.push_back(message);
+    }
+  }
+
+  require(messages.size() == 1, "signed weak bit should decode once");
+  requirePayload(messages[0], payload);
+  require(decoder.stats().weak_bits >= 1,
+          "signed weak bit should be counted");
+}
+
 void testLowContrastRecovery() {
   const std::vector<uint8_t> hello = {'h', 'e', 'l', 'l', 'o'};
   const std::vector<uint8_t> dim1 = {'d', 'i', 'm', '1'};
@@ -275,6 +302,7 @@ int main() {
   testSlowThresholdDrift();
   testPhaseDrift();
   testFastAndSlowTransmitters();
+  testSignedWeakBitDecodes();
   testLowContrastRecovery();
   testMessageAfterLongUptime();
 
