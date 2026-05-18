@@ -18,6 +18,7 @@ struct DecoderConfig {
 struct DecoderStats {
   uint32_t messages;
   uint32_t crc_failures;
+  uint32_t queue_drops;
   uint32_t sfd_timeouts;
   uint32_t weak_bits;
   uint32_t lost_center_edges;
@@ -40,7 +41,12 @@ public:
   explicit ManchesterDecoder(const DecoderConfig &config = DecoderConfig());
 
   void reset();
+  void resetStream();
+  void pushSample(uint16_t sample);
   bool pushSample(uint16_t sample, Message *out);
+  void pushSamples(const uint16_t *samples, size_t count);
+  bool hasMessage() const;
+  bool popMessage(Message *out);
 
   DecoderStats stats() const;
   uint16_t threshold() const;
@@ -78,18 +84,23 @@ private:
   static const uint8_t kContrastAdaptShift = 3;
   static const uint8_t kMaxLostCenterEdges = 5;
   static const uint8_t kSfdSearchMaxBits = 36;
+  static const uint8_t kMessageQueueDepth = 4;
+  static const uint8_t kMessageQueueMask = kMessageQueueDepth - 1;
 
   void resetSearch();
   void resetParser();
+  void resetMessageQueue();
+  bool processSample(uint16_t sample);
   bool updateEdgeTracker(uint16_t sample, EdgeEvent *edge);
   void handleSearchEdge(const EdgeEvent &edge);
   void beginSfdSearch(uint32_t edge_index);
   void pllHandleEdge(const EdgeEvent &edge);
-  bool updateScheduledDecode(uint16_t sample, Message *out);
-  bool finishDecodedBit(bool normal_bit, uint16_t strength, Message *out);
-  bool consumeDecodedBit(bool normal_bit, Message *out);
-  bool consumeFrameBit(bool normal_bit, Message *out);
-  bool consumeByte(uint8_t byte, Message *out);
+  bool updateScheduledDecode(uint16_t sample);
+  bool finishDecodedBit(bool normal_bit, uint16_t strength);
+  bool consumeDecodedBit(bool normal_bit);
+  bool consumeFrameBit(bool normal_bit);
+  bool consumeByte(uint8_t byte);
+  bool queueMessage(const Message &message);
   uint16_t currentSwing() const;
   uint16_t hysteresisCounts() const;
   uint16_t decodeThresholdCounts() const;
@@ -135,6 +146,10 @@ private:
   uint16_t crc_rx_;
   uint8_t payload_pos_;
   Message working_message_;
+
+  Message message_queue_[kMessageQueueDepth];
+  uint8_t message_head_;
+  uint8_t message_tail_;
 };
 
 } // namespace receiver

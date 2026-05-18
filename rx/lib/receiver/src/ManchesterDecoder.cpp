@@ -1,5 +1,7 @@
 #include "ManchesterDecoder.h"
 
+#include <string.h>
+
 namespace receiver {
 
 namespace {
@@ -52,6 +54,18 @@ uint16_t absI32ToU16(int32_t value) {
   return static_cast<uint16_t>(value);
 }
 
+void copyMessage(Message *destination, const Message &source) {
+  if (destination == nullptr) {
+    return;
+  }
+
+  destination->length = source.length;
+  destination->crc = source.crc;
+  if (source.length > 0U) {
+    memcpy(destination->payload, source.payload, source.length);
+  }
+}
+
 } // namespace
 
 DecoderConfig::DecoderConfig()
@@ -99,6 +113,7 @@ void ManchesterDecoder::reset() {
 
   stats_.messages = 0;
   stats_.crc_failures = 0;
+  stats_.queue_drops = 0;
   stats_.sfd_timeouts = 0;
   stats_.weak_bits = 0;
   stats_.lost_center_edges = 0;
@@ -110,6 +125,12 @@ void ManchesterDecoder::reset() {
   low_q8_ = 0;
   high_q8_ = 0;
   light_state_ = LightState::Unknown;
+  contrast_estimate_ = 0;
+  resetMessageQueue();
+  resetSearch();
+}
+
+void ManchesterDecoder::resetStream() {
   contrast_estimate_ = 0;
   resetSearch();
 }
@@ -146,12 +167,12 @@ void ManchesterDecoder::resetParser() {
   working_message_.crc = 0;
 }
 
-bool ManchesterDecoder::pushSample(uint16_t sample, Message *out) {
-  if (out != nullptr) {
-    out->length = 0;
-    out->crc = 0;
-  }
+void ManchesterDecoder::resetMessageQueue() {
+  message_head_ = 0;
+  message_tail_ = 0;
+}
 
+bool ManchesterDecoder::processSample(uint16_t sample) {
   EdgeEvent edge;
   if (updateEdgeTracker(sample, &edge)) {
     if (state_ == State::SearchPreamble) {
@@ -161,9 +182,46 @@ bool ManchesterDecoder::pushSample(uint16_t sample, Message *out) {
     }
   }
 
-  const bool emitted = updateScheduledDecode(sample, out);
+  const bool emitted = updateScheduledDecode(sample);
   ++sample_index_;
   return emitted;
+}
+
+void ManchesterDecoder::pushSample(uint16_t sample) {
+  (void)processSample(sample);
+}
+
+bool ManchesterDecoder::pushSample(uint16_t sample, Message *out) {
+  const bool emitted = processSample(sample);
+  if (emitted && out != nullptr) {
+    return popMessage(out);
+  }
+  return emitted;
+}
+
+void ManchesterDecoder::pushSamples(const uint16_t *samples, size_t count) {
+  if (samples == nullptr) {
+    return;
+  }
+
+  for (size_t i = 0; i < count; ++i) {
+    (void)processSample(samples[i]);
+  }
+}
+
+bool ManchesterDecoder::hasMessage() const {
+  return message_head_ != message_tail_;
+}
+
+bool ManchesterDecoder::popMessage(Message *out) {
+  if (out == nullptr || message_head_ == message_tail_) {
+    return false;
+  }
+
+  copyMessage(out, message_queue_[message_tail_]);
+  message_tail_ =
+      static_cast<uint8_t>((message_tail_ + 1U) & kMessageQueueMask);
+  return true;
 }
 
 DecoderStats ManchesterDecoder::stats() const {
@@ -377,7 +435,7 @@ void ManchesterDecoder::pllHandleEdge(const EdgeEvent &edge) {
   saw_center_edge_ = true;
 }
 
-bool ManchesterDecoder::updateScheduledDecode(uint16_t sample, Message *out) {
+bool ManchesterDecoder::updateScheduledDecode(uint16_t sample) {
   if (state_ == State::SearchPreamble) {
     return false;
   }
@@ -402,19 +460,18 @@ bool ManchesterDecoder::updateScheduledDecode(uint16_t sample, Message *out) {
     // away caused packet erasures while their polarity was still reliable.
     if (strength < threshold) {
       ++stats_.weak_bits;
-      return finishDecodedBit(delta > 0, threshold, out);
+      return finishDecodedBit(delta > 0, threshold);
     }
 
-    return finishDecodedBit(delta > 0, strength, out);
+    return finishDecodedBit(delta > 0, strength);
   }
 
   return false;
 }
 
-bool ManchesterDecoder::finishDecodedBit(bool normal_bit, uint16_t strength,
-                                         Message *out) {
+bool ManchesterDecoder::finishDecodedBit(bool normal_bit, uint16_t strength) {
   updateContrast(strength);
-  const bool emitted = consumeDecodedBit(normal_bit, out);
+  const bool emitted = consumeDecodedBit(normal_bit);
 
   if (state_ == State::SearchPreamble) {
     return emitted;
@@ -436,7 +493,7 @@ bool ManchesterDecoder::finishDecodedBit(bool normal_bit, uint16_t strength,
   return emitted;
 }
 
-bool ManchesterDecoder::consumeDecodedBit(bool normal_bit, Message *out) {
+bool ManchesterDecoder::consumeDecodedBit(bool normal_bit) {
   if (state_ == State::FindSfd) {
     sfd_shift_ =
         static_cast<uint8_t>((sfd_shift_ << 1) | (normal_bit ? 1U : 0U));
@@ -462,10 +519,10 @@ bool ManchesterDecoder::consumeDecodedBit(bool normal_bit, Message *out) {
     return false;
   }
 
-  return consumeFrameBit(normal_bit, out);
+  return consumeFrameBit(normal_bit);
 }
 
-bool ManchesterDecoder::consumeFrameBit(bool normal_bit, Message *out) {
+bool ManchesterDecoder::consumeFrameBit(bool normal_bit) {
   byte_acc_ = static_cast<uint8_t>((byte_acc_ << 1) | (normal_bit ? 1U : 0U));
   ++bit_count_;
 
@@ -476,10 +533,28 @@ bool ManchesterDecoder::consumeFrameBit(bool normal_bit, Message *out) {
   const uint8_t byte = byte_acc_;
   byte_acc_ = 0;
   bit_count_ = 0;
-  return consumeByte(byte, out);
+  return consumeByte(byte);
 }
 
-bool ManchesterDecoder::consumeByte(uint8_t byte, Message *out) {
+bool ManchesterDecoder::queueMessage(const Message &message) {
+  const uint8_t next =
+      static_cast<uint8_t>((message_head_ + 1U) & kMessageQueueMask);
+  if (next == message_tail_) {
+    ++stats_.queue_drops;
+    return false;
+  }
+
+  Message *queued = &message_queue_[message_head_];
+  queued->length = message.length;
+  queued->crc = message.crc;
+  if (message.length > 0U) {
+    memcpy(queued->payload, message.payload, message.length);
+  }
+  message_head_ = next;
+  return true;
+}
+
+bool ManchesterDecoder::consumeByte(uint8_t byte) {
   switch (state_) {
   case State::SearchPreamble:
   case State::FindSfd:
@@ -514,12 +589,12 @@ bool ManchesterDecoder::consumeByte(uint8_t byte, Message *out) {
     crc_rx_ |= byte;
     working_message_.crc = crc_rx_;
     if (crc_rx_ == crc_calc_) {
-      ++stats_.messages;
-      if (out != nullptr) {
-        *out = working_message_;
+      const bool queued = queueMessage(working_message_);
+      if (queued) {
+        ++stats_.messages;
       }
       resetSearch();
-      return true;
+      return queued;
     }
 
     ++stats_.crc_failures;

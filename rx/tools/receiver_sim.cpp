@@ -213,17 +213,19 @@ std::string hexPayload(const receiver::Message &message) {
 }
 
 void printMessage(const receiver::Message &message, uint64_t sample_index) {
-  std::cout << "message sample=" << sample_index
-            << " length=" << static_cast<unsigned>(message.length) << " crc=0x"
-            << std::hex << std::setw(4) << std::setfill('0') << message.crc
-            << std::dec << " ascii=\"" << asciiPayload(message) << "\" hex=["
-            << hexPayload(message) << "]\n";
+  // std::cout << "message sample=" << sample_index
+  //           << " length=" << static_cast<unsigned>(message.length) << " crc=0x"
+  //           << std::hex << std::setw(4) << std::setfill('0') << message.crc
+  //           << std::dec << " ascii=\"" << asciiPayload(message) << "\" hex=["
+  //           << hexPayload(message) << "]\n";
+  std::cout << asciiPayload(message) << '\n';
 }
 
 void printStats(const receiver::DecoderStats &stats) {
   std::cerr << "decoder stats:"
             << " messages=" << stats.messages
             << " crc_failures=" << stats.crc_failures
+            << " queue_drops=" << stats.queue_drops
             << " sfd_timeouts=" << stats.sfd_timeouts
             << " weak_bits=" << stats.weak_bits
             << " lost_center_edges=" << stats.lost_center_edges

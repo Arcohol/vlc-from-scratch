@@ -1,8 +1,8 @@
 # Arduino Due Manchester Receiver
 
 Portable Manchester receiver code for a visible light communication link, plus
-a native simulator/test harness and an Arduino Due sketch that uses the same
-decoder implementation.
+a native simulator/test harness. The Arduino Due sketch uses the reference
+ADC/PDC sampler with the shared `ManchesterDecoder` library.
 
 The decoder consumes one ADC sample at a time. It locks to the `0xAA` preamble,
 tracks slow light-level drift with adaptive high/low envelopes, uses a small
@@ -61,7 +61,7 @@ The sketch targets an Arduino Due on the Native USB Port:
 - Photodiode input: `A0`, SAM ADC channel 7.
 - ADC trigger: TC0/TIOA0 at the derived 200 kHz sample rate.
 - Sampling transport: ADC PDC/DMA into `uint16_t` buffers.
-- Output: decoded messages printed over `SerialUSB`.
+- Output: decoded payloads printed over `SerialUSB`, followed by CRLF.
 
 Install the Arduino SAM core if needed:
 
@@ -109,15 +109,19 @@ receiver::DecoderConfig config;
 receiver::ManchesterDecoder decoder(config);
 receiver::Message message;
 
-if (decoder.pushSample(adc_sample, &message)) {
+decoder.pushSamples(samples, sample_count);
+while (decoder.popMessage(&message)) {
   // message.payload[0..message.length) is CRC-valid.
 }
 ```
 
+For simple sample-at-a-time code, `pushSample(adc_sample, &message)` still
+returns `true` when that sample completes a CRC-valid message.
+
 `ManchesterDecoder::stats()` exposes counters for decoded messages, CRC
-failures, SFD timeouts, weak bits, lost center edges, length errors, signal
-swing, and contrast. These are useful when tuning optics, gain, or sampling
-timing.
+failures, queued-message drops, SFD timeouts, weak bits, lost center edges,
+length errors, signal swing, and contrast. These are useful when tuning optics,
+gain, or sampling timing.
 
 ## Assumptions
 
